@@ -62,7 +62,7 @@ class Executor:
                     # The more details about amp can be found in
                     # https://pytorch.org/docs/stable/notes/amp_examples.html
                     with torch.cuda.amp.autocast(scaler is not None):
-                        loss, loss_att, loss_ctc = model(
+                        loss, loss_att, loss_ctc, acc_att = model(
                             feats, feats_lengths, target, target_lengths)
                         loss = loss / accum_grad
                     if use_amp:
@@ -74,6 +74,9 @@ class Executor:
                 if batch_idx % accum_grad == 0:
                     if rank == 0 and writer is not None:
                         writer.add_scalar('train_loss', loss, self.step)
+                        writer.add_scalar('loss_attn', loss_att, self.step)
+                        writer.add_scalar('loss_ctc', loss_ctc, self.step)
+                        writer.add_scalar('acc_att', acc_att, self.step)
                     # Use mixed precision training
                     if use_amp:
                         scaler.unscale_(optimizer)
@@ -101,6 +104,8 @@ class Executor:
                         loss.item() * accum_grad)
                     if loss_att is not None:
                         log_str += 'loss_att {:.6f} '.format(loss_att.item())
+                    if acc_att is not None:
+                        log_str += 'acc_att {:.6f} '.format(acc_att)
                     if loss_ctc is not None:
                         log_str += 'loss_ctc {:.6f} '.format(loss_ctc.item())
                     log_str += 'lr {:.8f} rank {}'.format(lr, rank)
@@ -126,8 +131,8 @@ class Executor:
                 num_utts = target_lengths.size(0)
                 if num_utts == 0:
                     continue
-                loss, loss_att, loss_ctc = model(feats, feats_lengths, target,
-                                                 target_lengths)
+                loss, loss_att, loss_ctc, acc_att = model(feats, feats_lengths, target,
+                                                          target_lengths)
                 if torch.isfinite(loss):
                     num_seen_utts += num_utts
                     total_loss += loss.item() * num_utts
@@ -136,6 +141,8 @@ class Executor:
                         epoch, batch_idx, loss.item())
                     if loss_att is not None:
                         log_str += 'loss_att {:.6f} '.format(loss_att.item())
+                    if acc_att is not None:
+                        log_str += 'acc_att {:.6f} '.format(acc_att)
                     if loss_ctc is not None:
                         log_str += 'loss_ctc {:.6f} '.format(loss_ctc.item())
                     log_str += 'history loss {:.6f}'.format(total_loss /

@@ -76,7 +76,7 @@ class ASRModel(torch.nn.Module):
         text: torch.Tensor,
         text_lengths: torch.Tensor,
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor],
-               Optional[torch.Tensor]]:
+               Optional[torch.Tensor], Optional[float]]:
         """Frontend + Encoder + Decoder + Calc loss
 
         Args:
@@ -100,6 +100,7 @@ class ASRModel(torch.nn.Module):
                                                     text, text_lengths)
         else:
             loss_att = None
+            acc_att = None
 
         # 2b. CTC branch
         if self.ctc_weight != 0.0:
@@ -113,9 +114,8 @@ class ASRModel(torch.nn.Module):
         elif loss_att is None:
             loss = loss_ctc
         else:
-            loss = self.ctc_weight * loss_ctc + (1 -
-                                                 self.ctc_weight) * loss_att
-        return loss, loss_att, loss_ctc
+            loss = self.ctc_weight * loss_ctc + (1 - self.ctc_weight) * loss_att
+        return loss, loss_att, loss_ctc, acc_att
 
     def _calc_att_loss(
         self,
