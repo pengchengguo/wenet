@@ -368,7 +368,7 @@ class AudioDataset(Dataset):
         frame_bucket_limit="200,300",
         batch_bucket_limit="220,200",
         batch_factor=0.2,
-        shuffle=False,
+        sort=True,
     ):
         """Bucket dataset for loading audio data.
 
@@ -425,8 +425,8 @@ class AudioDataset(Dataset):
                 data.append((key, wav_path, duration, tokenid))
                 self.output_dim = output_dim
                 
-        if shuffle:
-            data = random.shuffle(data)
+        if sort:
+            data = sorted(data, key=lambda x: x[2])
 
         tot_sample = 0
         self.batches = []

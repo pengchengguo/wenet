@@ -678,6 +678,7 @@ class ASRModel(torch.nn.Module):
 
 
 def init_asr_model(configs):
+    # change the global cmvn to a single LayerNorm layer
     if configs['cmvn_file'] is not None:
         mean, istd = load_cmvn(configs['cmvn_file'], configs['is_json_cmvn'])
         global_cmvn = GlobalCMVN(
