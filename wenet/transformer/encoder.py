@@ -41,6 +41,7 @@ class BaseEncoder(torch.nn.Module):
         input_layer: str = "conv2d",
         pos_enc_layer_type: str = "abs_pos",
         normalize_before: bool = True,
+        normalize_feat: bool = True,
         concat_after: bool = False,
         static_chunk_size: int = 0,
         use_dynamic_chunk: bool = False,
@@ -113,6 +114,11 @@ class BaseEncoder(torch.nn.Module):
 
         self.normalize_before = normalize_before
         self.after_norm = torch.nn.LayerNorm(output_size, eps=1e-12)
+        
+        self.normalize_feat = normalize_feat
+        if normalize_feat:
+            self.feat_norm = torch.nn.LayerNorm(input_size, eps=1e-12)
+
         self.static_chunk_size = static_chunk_size
         self.use_dynamic_chunk = use_dynamic_chunk
         self.use_dynamic_left_chunk = use_dynamic_left_chunk
@@ -148,8 +154,11 @@ class BaseEncoder(torch.nn.Module):
         """
         T = xs.size(1)
         masks = ~make_pad_mask(xs_lens, T).unsqueeze(1)  # (B, 1, T)
-        if self.global_cmvn is not None:
-            xs = self.global_cmvn(xs)
+        # change global cmvn to a single LayerNorm layer
+        # if self.global_cmvn is not None:
+        #     xs = self.global_cmvn(xs)
+        if self.normalize_feat:
+            xs = self.feat_norm(xs)
         xs, pos_emb, masks = self.embed(xs, masks)
         mask_pad = masks  # (B, 1, T/subsample_rate)
         chunk_masks = add_optional_chunk_mask(xs, masks,
@@ -330,6 +339,7 @@ class TransformerEncoder(BaseEncoder):
         input_layer: str = "conv2d",
         pos_enc_layer_type: str = "abs_pos",
         normalize_before: bool = True,
+        normalize_feat: bool = True,
         concat_after: bool = False,
         static_chunk_size: int = 0,
         use_dynamic_chunk: bool = False,
@@ -344,7 +354,7 @@ class TransformerEncoder(BaseEncoder):
         super().__init__(input_size, output_size, attention_heads,
                          linear_units, num_blocks, dropout_rate,
                          positional_dropout_rate, attention_dropout_rate,
-                         input_layer, pos_enc_layer_type, normalize_before,
+                         input_layer, pos_enc_layer_type, normalize_before, normalize_feat,
                          concat_after, static_chunk_size, use_dynamic_chunk,
                          global_cmvn, use_dynamic_left_chunk)
         self.encoders = torch.nn.ModuleList([
@@ -373,6 +383,7 @@ class ConformerEncoder(BaseEncoder):
         input_layer: str = "conv2d",
         pos_enc_layer_type: str = "rel_pos",
         normalize_before: bool = True,
+        normalize_feat: bool = True,
         concat_after: bool = False,
         static_chunk_size: int = 0,
         use_dynamic_chunk: bool = False,
@@ -407,7 +418,7 @@ class ConformerEncoder(BaseEncoder):
         super().__init__(input_size, output_size, attention_heads,
                          linear_units, num_blocks, dropout_rate,
                          positional_dropout_rate, attention_dropout_rate,
-                         input_layer, pos_enc_layer_type, normalize_before,
+                         input_layer, pos_enc_layer_type, normalize_before, normalize_feat,
                          concat_after, static_chunk_size, use_dynamic_chunk,
                          global_cmvn, use_dynamic_left_chunk)
         activation = get_activation(activation_type)
