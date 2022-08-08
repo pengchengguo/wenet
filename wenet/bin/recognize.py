@@ -25,10 +25,10 @@ import yaml
 from torch.utils.data import DataLoader
 
 from wenet.dataset.dataset import Dataset
-from wenet.transformer.asr_model import init_asr_model
 from wenet.utils.checkpoint import load_checkpoint
 from wenet.utils.file_utils import read_symbol_table, read_non_lang_symbols
 from wenet.utils.config import override_config
+from wenet.utils.init_model import init_model
 
 def get_args():
     parser = argparse.ArgumentParser(description='recognize with your model')
@@ -62,14 +62,39 @@ def get_args():
     parser.add_argument('--mode',
                         choices=[
                             'attention', 'ctc_greedy_search',
-                            'ctc_prefix_beam_search', 'attention_rescoring'
+                            'ctc_prefix_beam_search', 'attention_rescoring',
+                            'rnnt_greedy_search', 'rnnt_beam_search',
+                            'rnnt_beam_attn_rescoring', 'ctc_beam_td_attn_rescoring'
                         ],
                         default='attention',
                         help='decoding mode')
+
+    parser.add_argument('--search_ctc_weight',
+                        type=float,
+                        default=1.0,
+                        help='ctc weight for nbest generation')
+    parser.add_argument('--search_transducer_weight',
+                        type=float,
+                        default=0.0,
+                        help='transducer weight for nbest generation')
     parser.add_argument('--ctc_weight',
                         type=float,
                         default=0.0,
-                        help='ctc weight for attention rescoring decode mode')
+                        help='ctc weight for rescoring weight in \
+                                  attention rescoring decode mode \
+                              ctc weight for rescoring weight in \
+                                  transducer attention rescore decode mode')
+
+    parser.add_argument('--transducer_weight',
+                        type=float,
+                        default=0.0,
+                        help='transducer weight for rescoring weight in transducer \
+                                 attention rescore mode')
+    parser.add_argument('--attn_weight',
+                        type=float,
+                        default=0.0,
+                        help='attention weight for rescoring weight in transducer \
+                              attention rescore mode')
     parser.add_argument('--decoding_chunk_size',
                         type=int,
                         default=-1,
@@ -97,6 +122,10 @@ def get_args():
                         action='append',
                         default=[],
                         help="override yaml config")
+    parser.add_argument('--connect_symbol',
+                        default='',
+                        type=str,
+                        help='used to connect the output characters')
 
     args = parser.parse_args()
     print(args)
@@ -132,9 +161,13 @@ def main():
     test_conf['filter_conf']['min_output_input_ratio'] = 0
     test_conf['speed_perturb'] = False
     test_conf['spec_aug'] = False
+    test_conf['spec_sub'] = False
     test_conf['shuffle'] = False
     test_conf['sort'] = False
-    test_conf['fbank_conf']['dither'] = 0.0
+    if 'fbank_conf' in test_conf:
+        test_conf['fbank_conf']['dither'] = 0.0
+    elif 'mfcc_conf' in test_conf:
+        test_conf['mfcc_conf']['dither'] = 0.0
     test_conf['batch_conf']['batch_type'] = "static"
     test_conf['batch_conf']['batch_size'] = args.batch_size
     non_lang_syms = read_non_lang_symbols(args.non_lang_syms)
@@ -150,15 +183,10 @@ def main():
     test_data_loader = DataLoader(test_dataset, batch_size=None, num_workers=0)
 
     # Init asr model from configs
-    model = init_asr_model(configs)
+    model = init_model(configs)
 
     # Load dict
-    char_dict = {}
-    with open(args.dict, 'r') as fin:
-        for line in fin:
-            arr = line.strip().split()
-            assert len(arr) == 2
-            char_dict[int(arr[1])] = arr[0]
+    char_dict = {v: k for k, v in symbol_table.items()}
     eos = len(char_dict) - 1
 
     load_checkpoint(model, args.checkpoint)
@@ -190,6 +218,60 @@ def main():
                     decoding_chunk_size=args.decoding_chunk_size,
                     num_decoding_left_chunks=args.num_decoding_left_chunks,
                     simulate_streaming=args.simulate_streaming)
+            elif args.mode == 'rnnt_greedy_search':
+                assert (feats.size(0) == 1)
+                assert 'predictor' in configs
+                hyps = model.greedy_search(
+                    feats,
+                    feats_lengths,
+                    decoding_chunk_size=args.decoding_chunk_size,
+                    num_decoding_left_chunks=args.num_decoding_left_chunks,
+                    simulate_streaming=args.simulate_streaming)
+            elif args.mode == 'rnnt_beam_search':
+                assert (feats.size(0) == 1)
+                assert 'predictor' in configs
+                hyps = model.beam_search(
+                    feats,
+                    feats_lengths,
+                    decoding_chunk_size=args.decoding_chunk_size,
+                    beam_size=args.beam_size,
+                    num_decoding_left_chunks=args.num_decoding_left_chunks,
+                    simulate_streaming=args.simulate_streaming,
+                    ctc_weight=args.search_ctc_weight,
+                    transducer_weight=args.search_transducer_weight)
+            elif args.mode == 'rnnt_beam_attn_rescoring':
+                assert (feats.size(0) == 1)
+                assert 'predictor' in configs
+                hyps = model.transducer_attention_rescoring(
+                    feats,
+                    feats_lengths,
+                    decoding_chunk_size=args.decoding_chunk_size,
+                    beam_size=args.beam_size,
+                    num_decoding_left_chunks=args.num_decoding_left_chunks,
+                    simulate_streaming=args.simulate_streaming,
+                    ctc_weight=args.ctc_weight,
+                    transducer_weight=args.transducer_weight,
+                    attn_weight=args.attn_weight,
+                    reverse_weight=args.reverse_weight,
+                    search_ctc_weight=args.search_ctc_weight,
+                    search_transducer_weight=args.search_transducer_weight)
+            elif args.mode == 'ctc_beam_td_attn_rescoring':
+                assert (feats.size(0) == 1)
+                assert 'predictor' in configs
+                hyps = model.transducer_attention_rescoring(
+                    feats,
+                    feats_lengths,
+                    decoding_chunk_size=args.decoding_chunk_size,
+                    beam_size=args.beam_size,
+                    num_decoding_left_chunks=args.num_decoding_left_chunks,
+                    simulate_streaming=args.simulate_streaming,
+                    ctc_weight=args.ctc_weight,
+                    transducer_weight=args.transducer_weight,
+                    attn_weight=args.attn_weight,
+                    reverse_weight=args.reverse_weight,
+                    search_ctc_weight=args.search_ctc_weight,
+                    search_transducer_weight=args.search_transducer_weight,
+                    beam_search_type='ctc')
             # ctc_prefix_beam_search and attention_rescoring only return one
             # result in List[int], change it to List[List[int]] for compatible
             # with other batch decoding mode
@@ -216,13 +298,13 @@ def main():
                     reverse_weight=args.reverse_weight)
                 hyps = [hyp]
             for i, key in enumerate(keys):
-                content = ''
+                content = []
                 for w in hyps[i]:
                     if w == eos:
                         break
-                    content += char_dict[w]
-                logging.info('{} {}'.format(key, content))
-                fout.write('{} {}\n'.format(key, content))
+                    content.append(char_dict[w])
+                logging.info('{} {}'.format(key, args.connect_symbol.join(content)))
+                fout.write('{} {}\n'.format(key, args.connect_symbol.join(content)))
 
 
 if __name__ == '__main__':

@@ -20,15 +20,15 @@ import os
 import torch
 import yaml
 
-from wenet.transformer.asr_model import init_asr_model
 from wenet.utils.checkpoint import load_checkpoint
+from wenet.utils.init_model import init_model
 
 
 def get_args():
     parser = argparse.ArgumentParser(description='export your script model')
     parser.add_argument('--config', required=True, help='config file')
     parser.add_argument('--checkpoint', required=True, help='checkpoint model')
-    parser.add_argument('--output_file', required=True, help='output file')
+    parser.add_argument('--output_file', default=None, help='output file')
     parser.add_argument('--output_quant_file',
                         default=None,
                         help='output quantized model file')
@@ -43,15 +43,16 @@ def main():
 
     with open(args.config, 'r') as fin:
         configs = yaml.load(fin, Loader=yaml.FullLoader)
-    model = init_asr_model(configs)
+    model = init_model(configs)
     print(model)
 
     load_checkpoint(model, args.checkpoint)
     # Export jit torch script model
 
-    script_model = torch.jit.script(model)
-    script_model.save(args.output_file)
-    print('Export model successfully, see {}'.format(args.output_file))
+    if args.output_file:
+        script_model = torch.jit.script(model)
+        script_model.save(args.output_file)
+        print('Export model successfully, see {}'.format(args.output_file))
 
     # Export quantized jit torch script model
     if args.output_quant_file:

@@ -24,8 +24,8 @@ ali_result=$dir/ali
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     nj=32
-    # Prepare requried data for ctc alignment
-    echo "Prepare data, prepare requried format"
+    # Prepare required data for ctc alignment
+    echo "Prepare data, prepare required format"
     for x in $set; do
         tools/format_data.sh --nj ${nj} \
             --feat-type wav --feat $feat_dir/$x/wav.scp \
@@ -36,7 +36,7 @@ fi
 
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     # Test model, please specify the model you want to use by --checkpoint
-        python wenet/bin/alignment.py --gpu -1 \
+        python wenet/bin/alignment_deprecated.py --gpu -1 \
             --config $config \
             --input_file $ali_format \
             --checkpoint $checkpoint \
