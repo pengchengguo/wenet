@@ -52,7 +52,6 @@ class BaseEncoder(torch.nn.Module):
         input_layer: str = "conv2d",
         pos_enc_layer_type: str = "abs_pos",
         normalize_before: bool = True,
-        normalize_feat: bool = True,
         concat_after: bool = False,
         static_chunk_size: int = 0,
         use_dynamic_chunk: bool = False,
@@ -160,11 +159,8 @@ class BaseEncoder(torch.nn.Module):
         """
         T = xs.size(1)
         masks = ~make_pad_mask(xs_lens, T).unsqueeze(1)  # (B, 1, T)
-        # change global cmvn to a single LayerNorm layer
-        # if self.global_cmvn is not None:
-        #     xs = self.global_cmvn(xs)
-        if self.normalize_feat:
-            xs = self.feat_norm(xs)
+        if self.global_cmvn is not None:
+            xs = self.global_cmvn(xs)
         xs, pos_emb, masks = self.embed(xs, masks)
         mask_pad = masks  # (B, 1, T/subsample_rate)
         chunk_masks = add_optional_chunk_mask(
@@ -350,7 +346,6 @@ class TransformerEncoder(BaseEncoder):
         input_layer: str = "conv2d",
         pos_enc_layer_type: str = "abs_pos",
         normalize_before: bool = True,
-        normalize_feat: bool = True,
         concat_after: bool = False,
         static_chunk_size: int = 0,
         use_dynamic_chunk: bool = False,
@@ -374,7 +369,6 @@ class TransformerEncoder(BaseEncoder):
             input_layer,
             pos_enc_layer_type,
             normalize_before,
-            normalize_feat,
             concat_after,
             static_chunk_size,
             use_dynamic_chunk,
@@ -414,7 +408,6 @@ class ConformerEncoder(BaseEncoder):
         input_layer: str = "conv2d",
         pos_enc_layer_type: str = "rel_pos",
         normalize_before: bool = True,
-        normalize_feat: bool = True,
         concat_after: bool = False,
         static_chunk_size: int = 0,
         use_dynamic_chunk: bool = False,
@@ -458,7 +451,6 @@ class ConformerEncoder(BaseEncoder):
             input_layer,
             pos_enc_layer_type,
             normalize_before,
-            normalize_feat,
             concat_after,
             static_chunk_size,
             use_dynamic_chunk,

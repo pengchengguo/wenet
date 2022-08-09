@@ -288,16 +288,9 @@ class CollateFunc(object):
         spec_aug_conf=None,
         spec_sub=False,
         spec_sub_conf=None,
-        raw_wav=True,
         feature_extraction_conf=None,
         wav_distortion_conf=None,
     ):
-        """
-        Args:
-            raw_wav:
-                    True if input is raw wav and feature extraction is needed.
-                    False if input is extracted feature
-        """
         self.wav_distortion_conf = wav_distortion_conf
         self.feature_extraction_conf = feature_extraction_conf
         self.spec_aug = spec_aug
@@ -309,11 +302,8 @@ class CollateFunc(object):
         self.spec_sub_conf = spec_sub_conf
 
     def __call__(self, batch, max_tgt_len=30):
-        data = batch[0][0]
-        max_src_len = batch[0][1]
-
         keys, xs, ys = _extract_feature(
-            data,
+            batch,
             self.speed_perturb,
             self.wav_distortion_conf,
             self.feature_extraction_conf,
@@ -341,7 +331,7 @@ class CollateFunc(object):
             [torch.from_numpy(x).float() for x in xs],
             batch_first=True,
             padding_value=0.0,
-            padding_max_len=max_src_len,
+            padding_max_len=1200,
         )
 
         xs_lengths = torch.from_numpy(
@@ -373,18 +363,7 @@ class AudioDataset(Dataset):
         min_length=0,
         token_max_length=200,
         token_min_length=1,
-        frame_bucket_limit="200,300",
-        batch_bucket_limit="220,200",
-        batch_factor=0.2,
-        sort=True,
     ):
-        frame_bucket_limit = [int(i) for i in frame_bucket_limit.split(",")]
-        batch_bucket_limit = [
-            int(int(i) * batch_factor) for i in batch_bucket_limit.split(",")
-        ]
-        assert len(frame_bucket_limit) == len(batch_bucket_limit)
-        bucket_select_dict = self.bucket_init(frame_bucket_limit)
-
         # load all samples
         data = []
         with codecs.open(data_file, "r", encoding="utf-8") as f:
@@ -399,15 +378,9 @@ class AudioDataset(Dataset):
                 duration = int(float(arr[2].split(":")[1]) * 1000 / 10)
                 data.append((key, wav_path, duration, tokenid))
                 self.output_dim = output_dim
-        if sort:
-            data = sorted(data, key=lambda x: x[2])
 
         tot_sample = 0
         self.batches = []
-        caches = {}  # caches to store data
-        for idx, max_frame in enumerate(frame_bucket_limit):
-            # caches[idx]: [data, num_sentence, max_frame]
-            caches[idx] = [[], 0, max_frame]
 
         for i in range(len(data)):
             length = data[i][2]
@@ -419,87 +392,20 @@ class AudioDataset(Dataset):
                 continue
             else:
                 tot_sample += 1
-                bucket_idx = bucket_select_dict[length]
-                caches[bucket_idx][0].append((data[i][0], data[i][1], data[i][3]))
-                caches[bucket_idx][1] += 1
-
-                if caches[bucket_idx][1] >= batch_bucket_limit[bucket_idx]:
-                    self.batches.append((caches[bucket_idx][0], caches[bucket_idx][2]))
-                    caches[bucket_idx] = [[], 0, frame_bucket_limit[bucket_idx]]
+                # (uttid, wav_path, tokens)
+                self.batches.append((data[i][0], data[i][1], data[i][3]))
 
         logging.warning(
             "total utts: {}, remove too long/short utts: {}".format(
                 tot_sample, len(data) - tot_sample
             )
         )
-        # handle the left samples which are not able to form a complete batch
-        for key, value in caches.items():
-            if len(value[0]) != 0:
-                repeat_time = math.ceil(batch_bucket_limit[key] / len(value[0]))
-                data_expand = value[0] * repeat_time
-                self.batches.append((data_expand[: batch_bucket_limit[key]], value[2]))
-
-        del caches
 
         self.sos = self.output_dim - 1
         self.eos = self.output_dim - 1
-
-    def bucket_init(self, frame_bucket_limit):
-        bucket_select_dict = {}
-        for idx, _ in enumerate(frame_bucket_limit):
-            low = 0 if idx == 0 else frame_bucket_limit[idx - 1] + 1
-            high = frame_bucket_limit[idx] + 1
-            bucket_select_dict.update(dict([[i, idx] for i in range(low, high)]))
-
-        return bucket_select_dict
 
     def __getitem__(self, idx):
         return self.batches[idx]
 
     def __len__(self):
         return len(self.batches)
-
-
-if __name__ == "__main__":
-    torch.manual_seed(777)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config_file", help="config file")
-    parser.add_argument("--data_file", help="input data file")
-    args = parser.parse_args()
-
-    with open(args.config_file, "r") as fin:
-        configs = yaml.load(fin, Loader=yaml.FullLoader)
-
-    # Init dataset and data loader
-    collate_conf = configs["collate_conf"]
-    collate_func = CollateFunc(**collate_conf)
-    dataset_conf = configs["dataset_conf"]
-    dataset = AudioDataset(
-        args.data_file,
-        max_length=dataset_conf["max_length"],
-        min_length=dataset_conf["min_length"],
-        token_max_length=dataset_conf["token_max_length"],
-        token_min_length=dataset_conf["token_min_length"],
-        frame_bucket_limit=dataset_conf["frame_bucket_limit"],
-        batch_bucket_limit=dataset_conf["batch_bucket_limit"],
-        batch_factor=dataset_conf["batch_factor"],
-    )
-
-    data_loader = DataLoader(
-        dataset,
-        batch_size=1,
-        shuffle=True,
-        sampler=None,
-        num_workers=0,
-        collate_fn=collate_func,
-    )
-
-    for i, batch in enumerate(data_loader):
-        keys = batch[0]
-        xs_pad = batch[1]
-        ys_pad = batch[2]
-        xs_lengths = batch[3]
-        ys_lengths = batch[4]
-        print(xs_pad.shape)
-        print(ys_pad.shape)

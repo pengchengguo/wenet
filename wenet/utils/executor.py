@@ -76,10 +76,6 @@ class Executor:
                     # The more details about amp can be found in
                     # https://pytorch.org/docs/stable/notes/amp_examples.html
                     with torch.cuda.amp.autocast(scaler is not None):
-                        loss, loss_att, loss_ctc, acc_att = model(
-                            feats, feats_lengths, target, target_lengths
-                        )
-                        loss = loss / accum_grad
                         loss_dict = model(feats, feats_lengths, target, target_lengths)
                         loss = loss_dict["loss"] / accum_grad
                     if use_amp:
@@ -91,12 +87,6 @@ class Executor:
                 if batch_idx % accum_grad == 0:
                     if rank == 0 and writer is not None:
                         writer.add_scalar("train_loss", loss, self.step)
-                        writer.add_scalar("loss_attn", loss_att, self.step)
-                        if loss_ctc is None:
-                            writer.add_scalar("loss_ctc", 0.0, self.step)
-                        else:
-                            writer.add_scalar("loss_ctc", loss_ctc, self.step)
-                        writer.add_scalar("acc_att", acc_att, self.step)
                     # Use mixed precision training
                     if use_amp:
                         scaler.unscale_(optimizer)

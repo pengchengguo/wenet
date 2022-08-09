@@ -27,9 +27,13 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from wenet.dataset.dataset_bucket import AudioDataset, CollateFunc
-from wenet.transformer.asr_model import init_asr_model
-from wenet.utils.checkpoint import load_checkpoint, save_checkpoint
+from wenet.utils.checkpoint import (
+    load_checkpoint,
+    save_checkpoint,
+    load_trained_modules,
+)
 from wenet.utils.executor import Executor
+from wenet.utils.init_model import init_model
 from wenet.utils.scheduler import WarmupLR
 
 if __name__ == "__main__":
@@ -38,10 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_data", required=True, help="train data file")
     parser.add_argument("--cv_data", required=True, help="cv data file")
     parser.add_argument(
-        "--gpu",
-        type=int,
-        default=-1,
-        help="gpu id for this local rank, -1 for cpu",
+        "--gpu", type=int, default=-1, help="gpu id for this local rank, -1 for cpu"
     )
     parser.add_argument("--model_dir", required=True, help="save model dir")
     parser.add_argument("--checkpoint", help="checkpoint model")
@@ -71,10 +72,7 @@ if __name__ == "__main__":
         help="distributed backend",
     )
     parser.add_argument(
-        "--ddp.init_method",
-        dest="init_method",
-        default=None,
-        help="ddp init method",
+        "--ddp.init_method", dest="init_method", default=None, help="ddp init method"
     )
     parser.add_argument(
         "--num_workers",
@@ -95,6 +93,19 @@ if __name__ == "__main__":
         help="Use automatic mixed precision training",
     )
     parser.add_argument("--cmvn", default=None, help="global cmvn file")
+    parser.add_argument(
+        "--enc_init",
+        default=None,
+        type=str,
+        help="Pre-trained model to initialize encoder",
+    )
+    parser.add_argument(
+        "--enc_init_mods",
+        default="encoder.",
+        type=lambda s: [str(mod) for mod in s.split(",") if s != ""],
+        help="List of encoder modules \
+                        to initialize ,separated by a comma",
+    )
 
     args = parser.parse_args()
 
@@ -102,7 +113,7 @@ if __name__ == "__main__":
         level=logging.DEBUG,
         format="%(asctime)s %(levelname)s %(message)s",
         filename=os.path.join(args.model_dir, "train.log"),
-        filemode='w',
+        filemode="w",
     )
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     # Set random seed
@@ -118,6 +129,8 @@ if __name__ == "__main__":
     cv_collate_conf = copy.deepcopy(configs["collate_conf"])
     # no augmenation on cv set
     cv_collate_conf["spec_aug"] = False
+    cv_collate_conf["spec_sub"] = False
+    # using raw_wav input always
     cv_collate_conf["feature_dither"] = 0.0
     cv_collate_conf["speed_perturb"] = False
     cv_collate_conf["wav_distortion_conf"]["wav_distortion_rate"] = 0
@@ -182,6 +195,7 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
     )
 
+    # using raw_wav input always
     input_dim = configs["collate_conf"]["feature_extraction_conf"]["mel_bins"]
     vocab_size = train_dataset.output_dim
 
@@ -189,7 +203,7 @@ if __name__ == "__main__":
     configs["input_dim"] = input_dim
     configs["output_dim"] = vocab_size
     configs["cmvn_file"] = args.cmvn
-    configs['is_json_cmvn'] = True
+    configs["is_json_cmvn"] = True
     if args.rank == 0:
         saved_config_path = os.path.join(args.model_dir, "train.yaml")
         with open(saved_config_path, "w") as fout:
@@ -197,7 +211,7 @@ if __name__ == "__main__":
             fout.write(data)
 
     # Init asr model from configs
-    model = init_asr_model(configs)
+    model = init_model(configs)
     print(model)
     num_params = sum(p.numel() for p in model.parameters())
     print("the number of model params: {}".format(num_params))
@@ -212,6 +226,9 @@ if __name__ == "__main__":
     # If specify checkpoint, load some info from checkpoint
     if args.checkpoint is not None:
         infos = load_checkpoint(model, args.checkpoint)
+    elif args.enc_init is not None:
+        logging.debug("load pretrained encoders: {}".format(args.enc_init))
+        infos = load_trained_modules(model, args)
     else:
         infos = {}
     start_epoch = infos.get("epoch", -1) + 1
@@ -259,6 +276,7 @@ if __name__ == "__main__":
     for epoch in range(start_epoch, num_epochs):
         if distributed:
             train_sampler.set_epoch(epoch)
+        configs["epoch"] = epoch
         lr = optimizer.param_groups[0]["lr"]
         logging.info("Epoch {} TRAIN info lr {}".format(epoch, lr))
         executor.train(
@@ -271,9 +289,7 @@ if __name__ == "__main__":
             configs,
             scaler,
         )
-        total_loss, num_seen_utts = executor.cv(
-            model, cv_data_loader, device, configs
-        )
+        total_loss, num_seen_utts = executor.cv(model, cv_data_loader, device, configs)
         if args.world_size > 1:
             # all_reduce expected a sequence parameter, so we use [num_seen_utts].
             num_seen_utts = torch.Tensor([num_seen_utts]).to(device)
@@ -292,12 +308,7 @@ if __name__ == "__main__":
             save_checkpoint(
                 model,
                 save_model_path,
-                {
-                    "epoch": epoch,
-                    "lr": lr,
-                    "cv_loss": cv_loss,
-                    "step": executor.step,
-                },
+                {"epoch": epoch, "lr": lr, "cv_loss": cv_loss, "step": executor.step},
             )
             writer.add_scalar("epoch/cv_loss", cv_loss, epoch)
             writer.add_scalar("epoch/lr", lr, epoch)
